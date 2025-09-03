@@ -8,18 +8,22 @@
 #include "Logger.hpp"
 #include "ProxyResolver.hpp"
 
-#define MOD_PATH "C:\\Users\\Beemer\\HKIAInfiniteGift\\x64\\Release\\HKIAInfiniteGift.dll"
-#define GAMEASSEMBLY "GameAssembly.dll"
-#define GAME_PROCESS "Hello Kitty.exe"
+#define MOD_PATH "C:\\Users\\Beemer\\HKIAInfiniteGift\\x64\\Release\\HKIAInfiniteGift.dll" // Change this to your mod DLL path
+#define GAMEASSEMBLY "GameAssembly.dll" // Change this if the target game uses a different name
+#define GAME_PROCESS "Hello Kitty.exe" // Change this to your target process name
 
 using il2cpp_init_fn = void* (__cdecl*)(void*);
 using il2cpp_runtime_invoke_fn = void* (__cdecl*)(void*, void*, void**, void*);
 using il2cpp_method_get_name_fn = const char* (__cdecl*)(void*);
 
 // Function pointers
-il2cpp_init_fn orig_il2cpp_init = nullptr;
-il2cpp_runtime_invoke_fn orig_runtime_invoke = nullptr;
-il2cpp_method_get_name_fn il2cpp_method_get_name = nullptr;
+static LPVOID orig_il2cpp_init = nullptr;
+static LPVOID orig_runtime_invoke = nullptr;
+
+// Trampolines
+static il2cpp_init_fn il2cpp_init = nullptr;
+static il2cpp_runtime_invoke_fn il2cpp_runtime_invoke = nullptr;
+static il2cpp_method_get_name_fn il2cpp_method_get_name = nullptr;
 
 bool modStarted = false;
 void(*startFunc)() = nullptr;
@@ -38,59 +42,43 @@ static bool IsTargetGameProcess() {
     if (lastSlash != std::string::npos)
         filename = filename.substr(lastSlash + 1);
 
-    // Adjust for your game EXE
     return filename == GAME_PROCESS;
 }
-
-void LoadManagedMod() {
-    if (modStarted) return;
-    modStarted = true;
-
-    LOG("Loading mod from %s", MOD_PATH);
-    LoadLibraryA(MOD_PATH);
-}
-
-bool g_FinalLoad = false;
 
 void* __cdecl Il2CppRuntimeInvokeHook(void* method, void* obj, void** args, void* exc) {
     if (!il2cpp_method_get_name)
         return 0;
 
-    auto result = orig_runtime_invoke(method, obj, args, exc);
-
+    auto result = il2cpp_runtime_invoke(method, obj, args, exc);
     const char* name = il2cpp_method_get_name(method);
     if (!name || !strstr(name, "Internal_ActiveSceneChanged"))
         return result;
 
-
-    MH_DisableHook(reinterpret_cast<void*>(orig_runtime_invoke));
-    MH_RemoveHook(reinterpret_cast<void*>(orig_runtime_invoke));
+    MH_DisableHook(orig_runtime_invoke);
+    MH_RemoveHook(orig_runtime_invoke);
 
     LOG("Invoke hijacked : %s", name);
-    LoadManagedMod();
     return result;
 }
 
 void* __cdecl Il2CppInitHook(void* domain) {
     LOG("il2cpp_init hook called");
 
-    void* result = orig_il2cpp_init(domain);
-    MH_DisableHook(reinterpret_cast<void*>(orig_il2cpp_init));
-    MH_RemoveHook(reinterpret_cast<void*>(orig_il2cpp_init));
+    void* result = il2cpp_init(domain);
+    MH_DisableHook(orig_il2cpp_init);
+    MH_RemoveHook(orig_il2cpp_init);
 
     HMODULE gameAssembly = GetModuleHandleA("GameAssembly.dll");
     if (!gameAssembly) return result;
 
-    FARPROC invokePtr = GetProcAddress(gameAssembly, "il2cpp_runtime_invoke");
-    FARPROC namePtr = GetProcAddress(gameAssembly, "il2cpp_method_get_name");
-    LPVOID runtimeHook = reinterpret_cast<LPVOID>(Il2CppRuntimeInvokeHook);
+    orig_runtime_invoke = reinterpret_cast<LPVOID>(GetProcAddress(gameAssembly, "il2cpp_runtime_invoke"));
+    il2cpp_method_get_name = reinterpret_cast<il2cpp_method_get_name_fn>(
+        GetProcAddress(gameAssembly, "il2cpp_method_get_name"));
 
-    if (invokePtr != nullptr && namePtr != nullptr) {
-        il2cpp_method_get_name = reinterpret_cast<il2cpp_method_get_name_fn>(namePtr);
-        MH_CreateHook(reinterpret_cast<void*>(invokePtr), runtimeHook, reinterpret_cast<LPVOID*>(&orig_runtime_invoke));
-        MH_EnableHook(reinterpret_cast<void*>(invokePtr));
-
-
+    if (orig_runtime_invoke != nullptr && il2cpp_method_get_name != nullptr) {
+        LPVOID runtimeHook = reinterpret_cast<LPVOID>(&Il2CppRuntimeInvokeHook);
+        MH_CreateHook(orig_runtime_invoke, runtimeHook, reinterpret_cast<LPVOID*>(&il2cpp_runtime_invoke));
+        MH_EnableHook(orig_runtime_invoke);
         LOG("Hooked il2cpp_runtime_invoke");
     }
 
@@ -120,24 +108,38 @@ void Init(HMODULE hModule) {
         return;
     }
 
-    FARPROC initPtr = GetProcAddress(gameAssembly, "il2cpp_init");
-    LPVOID initHook = reinterpret_cast<LPVOID>(Il2CppInitHook);
-    if (!initPtr) return;
+    orig_il2cpp_init = reinterpret_cast<void*>(GetProcAddress(gameAssembly, "il2cpp_init"));
+    if (!orig_il2cpp_init) return;
 
-    MH_CreateHook(reinterpret_cast<LPVOID>(initPtr), initHook, reinterpret_cast<LPVOID*>(&orig_il2cpp_init));
-    MH_EnableHook(reinterpret_cast<LPVOID>(initPtr));
+    LPVOID initHook = reinterpret_cast<LPVOID>(&Il2CppInitHook);
+    MH_CreateHook(orig_il2cpp_init, initHook, reinterpret_cast<LPVOID*>(&il2cpp_init));
+    MH_EnableHook(orig_il2cpp_init);
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD ulReasonForCall, LPVOID) {
-    if (ulReasonForCall != DLL_PROCESS_ATTACH)
-        return TRUE;
+static DWORD WINAPI HookThread(LPVOID hModule) {
+    MH_Initialize();
 
-    if (!IsTargetGameProcess()) {
-        std::cout << "[ProxyLoader] Not a target game process" << std::endl;
-        return TRUE;
+    // Wait for GameAssembly to be loaded by the game
+    HMODULE gameAsm = nullptr;
+    for (int i = 0; i < 600 && !gameAsm; ++i) { // up to ~60s
+        gameAsm = GetModuleHandleA(GAMEASSEMBLY);
+        if (!gameAsm) Sleep(100);
     }
+    if (!gameAsm) return 0;
 
-    ProxyResolver::Init(hModule);
-    Init(hModule);
-    return TRUE;
+    auto initPtr = reinterpret_cast<void*>(GetProcAddress(gameAsm, "il2cpp_init"));
+    if (!initPtr) return 0;
+
+    orig_il2cpp_init = initPtr;
+    MH_CreateHook(initPtr, (LPVOID)&Il2CppInitHook, (LPVOID*)&il2cpp_init);
+    MH_EnableHook(initPtr);
+    return 0;
+}
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        if (!IsTargetGameProcess()) return TRUE;
+        DisableThreadLibraryCalls(hModule);
+        CreateThread(nullptr, 0, HookThread, hModule, 0, nullptr);
+    }
 }
