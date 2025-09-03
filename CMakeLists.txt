@@ -17,8 +17,6 @@ add_library(ProxyLoader SHARED ${SOURCES})
 set(DEF_FILE "${CMAKE_SOURCE_DIR}/version.def")
 target_sources(ProxyLoader PRIVATE "${DEF_FILE}")
 
-# If your code does #include "foo.h" that sits in src/, keep ${SRC_DIR}
-# If headers are in src/include and src/include/Exports, add those too.
 target_include_directories(ProxyLoader
     PRIVATE
         "${SRC_DIR}"
@@ -39,7 +37,7 @@ endif()
 
 set_target_properties(ProxyLoader PROPERTIES
   OUTPUT_NAME "version"            # base name for all artifacts
-  RUNTIME_OUTPUT_NAME "version"    # the DLL file name
-  ARCHIVE_OUTPUT_NAME "version"    # the import library name
-  PREFIX ""                        # (Windows DLLs normally have no 'lib' prefix; harmless to set)
+  RUNTIME_OUTPUT_NAME "version"    # DLL file name
+  ARCHIVE_OUTPUT_NAME "version"    # import library name
+  PREFIX ""
 )
