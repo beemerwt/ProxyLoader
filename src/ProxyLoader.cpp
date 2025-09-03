@@ -4,11 +4,12 @@
 #include <MinHook.h>
 #include <iostream>
 #include <string>
-#include "Logger.hpp"
 #include "ProxyMap.hpp"
+#include "Logger.hpp"
 #include "ProxyResolver.hpp"
 
 #define MOD_PATH "C:\\Users\\Beemer\\HKIAInfiniteGift\\x64\\Release\\HKIAInfiniteGift.dll"
+#define GAMEASSEMBLY "GameAssembly.dll"
 #define GAME_PROCESS "Hello Kitty.exe"
 
 using il2cpp_init_fn = void* (__cdecl*)(void*);
@@ -45,7 +46,7 @@ void LoadManagedMod() {
     if (modStarted) return;
     modStarted = true;
 
-    Logger::Log("Loading mod from %s", MOD_PATH);
+    LOG("Loading mod from %s", MOD_PATH);
     LoadLibraryA(MOD_PATH);
 }
 
@@ -65,14 +66,13 @@ void* __cdecl Il2CppRuntimeInvokeHook(void* method, void* obj, void** args, void
     MH_DisableHook(reinterpret_cast<void*>(orig_runtime_invoke));
     MH_RemoveHook(reinterpret_cast<void*>(orig_runtime_invoke));
 
-    Logger::Log("Invoke hijacked : %s", name);
+    LOG("Invoke hijacked : %s", name);
     LoadManagedMod();
     return result;
 }
 
 void* __cdecl Il2CppInitHook(void* domain) {
-    Logger::Instance().ResetHandles();
-    Logger::Log("il2cpp_init hook called");
+    LOG("il2cpp_init hook called");
 
     void* result = orig_il2cpp_init(domain);
     MH_DisableHook(reinterpret_cast<void*>(orig_il2cpp_init));
@@ -90,7 +90,8 @@ void* __cdecl Il2CppInitHook(void* domain) {
         MH_CreateHook(reinterpret_cast<void*>(invokePtr), runtimeHook, reinterpret_cast<LPVOID*>(&orig_runtime_invoke));
         MH_EnableHook(reinterpret_cast<void*>(invokePtr));
 
-        Logger::Log("Hooked il2cpp_runtime_invoke");
+
+        LOG("Hooked il2cpp_runtime_invoke");
     }
 
     return result;
@@ -108,32 +109,23 @@ extern "C" __declspec(dllexport) void __cdecl NativeHookDetach(void** target, vo
 }
 
 bool hooksInitiated = false;
-bool SetupHooks() {
+void Init(HMODULE hModule) {
+    // Initialize the logger
+    LOG("Probing il2cpp_init");
     MH_Initialize();
 
-    HMODULE gameAssembly = LoadLibraryW(L"GameAssembly.dll");
+    HMODULE gameAssembly = LoadLibraryA(GAMEASSEMBLY);
     if (!gameAssembly) {
-        Logger::Log("Failed to load GameAssembly.dll");
-        return false;
+        LOG("Failed to load GameAssembly.dll");
+        return;
     }
 
     FARPROC initPtr = GetProcAddress(gameAssembly, "il2cpp_init");
     LPVOID initHook = reinterpret_cast<LPVOID>(Il2CppInitHook);
-    if (!initPtr) return false;
+    if (!initPtr) return;
 
     MH_CreateHook(reinterpret_cast<LPVOID>(initPtr), initHook, reinterpret_cast<LPVOID*>(&orig_il2cpp_init));
     MH_EnableHook(reinterpret_cast<LPVOID>(initPtr));
-    return true;
-}
-
-void Init(HMODULE hModule) {
-    // Initialize the logger
-    Logger::Instance().Start(GetLogTimeName());
-    Logger::SetHeader("[ProxyLoader]");
-    Logger::Log("Probing il2cpp_init");
-
-    if (SetupHooks())
-        Logger::Instance().NullHandles();
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ulReasonForCall, LPVOID) {

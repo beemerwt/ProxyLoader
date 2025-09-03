@@ -1,5 +1,6 @@
 // ProxyResolver.cpp
 // C++ equivalent of MelonLoader's ProxyResolver for replacing DLL exports at runtime
+#include <algorithm>
 #include <shlobj.h>
 #include <string_view>
 #include <filesystem>
@@ -11,7 +12,7 @@
 #define MODULE_EXTENSION ".dll"
 
 namespace ProxyResolver {
-void MapProxyByName(PLATFORM_MODULE ourHandle, PLATFORM_MODULE ogHandle, std::string_view name);
+void MapProxyByName(HMODULE ourHandle, HMODULE ogHandle, std::string_view name);
 
 // theirExport = src, ourExport = dst
 void PatchExport(void* theirExport, void* ourExport) {
@@ -40,12 +41,12 @@ void PatchExport(void* theirExport, void* ourExport) {
     VirtualProtect(ourExport, sizeof(shellcode), oldProtect, &oldProtect);
 }
 
-void CreateExport(PLATFORM_MODULE ourHandle, PLATFORM_MODULE ogHandle,
+void CreateExport(HMODULE ourHandle, HMODULE ogHandle,
     const std::string_view& method)
 {
     const char* preTag = "Impl";
     if (!method.starts_with(preTag)) {
-        Logger::Log("Method does not start with Impl: %s", method);
+        LOG("Method does not start with Impl: %s", method);
         return;
     }
 
@@ -57,7 +58,7 @@ void CreateExport(PLATFORM_MODULE ourHandle, PLATFORM_MODULE ogHandle,
     if (!NativeLibrary::TryGetExport(ogHandle, _export, &theirExport)
         || !NativeLibrary::TryGetExport(ourHandle, _export, &ourExport))
     {
-        Logger::Log("Failed to get export: %s", _export.c_str());
+        LOG("Failed to get export: %s", _export.c_str());
         return;
     }
 
@@ -74,7 +75,7 @@ std::filesystem::path GetSystemFolderPath() {
     return {};
 }
 
-bool LoadModule(const std::filesystem::path& filePath, PLATFORM_MODULE* handle)
+bool LoadModule(const std::filesystem::path& filePath, HMODULE* handle)
 {
     if (!std::filesystem::exists(filePath))
         return false;
@@ -83,43 +84,43 @@ bool LoadModule(const std::filesystem::path& filePath, PLATFORM_MODULE* handle)
 }
 
 bool LoadModuleFromLocalCopy(const std::filesystem::path& basePath, const std::string& fileName,
-    const std::string tag, PLATFORM_MODULE* handle)
+    const std::string tag, HMODULE* handle)
 {
     if (basePath.empty())
         return false;
 
     auto filePath = basePath / (fileName + tag + MODULE_EXTENSION);
-    Logger::Log("Loading Module from Local Copy: %s", filePath.string().c_str());
+    LOG("Loading Module from Local Copy: %s", filePath.string().c_str());
     return LoadModule(filePath, handle);
 }
 
-bool LoadModuleFromSystemCopy(const std::string& fileName, PLATFORM_MODULE* handle)
+bool LoadModuleFromSystemCopy(const std::string& fileName, HMODULE* handle)
 {
     auto systemFolder = GetSystemFolderPath();
     auto filePath = systemFolder / (fileName + MODULE_EXTENSION);
-    Logger::Log("Loading Module from System: %s", filePath.string().c_str());
+    LOG("Loading Module from System: %s", filePath.string().c_str());
     return LoadModule(filePath, handle);
 }
 
-void Init(PLATFORM_MODULE ourHandle) {
+void Init(HMODULE ourHandle) {
     char path[MAX_PATH];
     if (GetModuleFileNameA(ourHandle, path, MAX_PATH) == 0)
         return;
 
-    Logger::Log("Module File Name: %s", path);
+    LOG("Module File Name: %s", path);
 
     std::string ourName = std::filesystem::path(path).stem().string();
     std::string basePath = std::filesystem::path(path).parent_path().string();
 
-    PLATFORM_MODULE ogHandle;
+    HMODULE ogHandle;
     if (!LoadModuleFromLocalCopy(basePath, ourName, "_original", &ogHandle)
         && !LoadModuleFromSystemCopy(ourName, &ogHandle)) {
-        Logger::Log("Failed to load modules for %s", ourName.c_str());
+        LOG("Failed to load modules for %s", ourName.c_str());
         return;
     }
 
-    Logger::Log("Modules loaded successfully.");
-    Logger::Log("Creating exports...");
+    LOG("Modules loaded successfully.");
+    LOG("Creating exports...");
 
     auto shared = SharedExports::GetAllImplNames();
     for (size_t i = 0; i < shared.size(); ++i)
@@ -134,7 +135,7 @@ bool ichar_equals(char a, char b)
         std::tolower(static_cast<unsigned char>(b));
 }
 
-void MapProxyByName(PLATFORM_MODULE ourHandle, PLATFORM_MODULE ogHandle, std::string_view name)
+void MapProxyByName(HMODULE ourHandle, HMODULE ogHandle, std::string_view name)
 {
     if (std::ranges::equal(name, "d3d10", ichar_equals))
         CreateExports(ourHandle, ogHandle, D3D10Exports::GetAllImplNames());
@@ -176,9 +177,9 @@ void MapProxyByName(PLATFORM_MODULE ourHandle, PLATFORM_MODULE ogHandle, std::st
         CreateExports(ourHandle, ogHandle, WinMMExports::GetAllImplNames());
 
     else if (std::ranges::equal(name, "hkiainfinitegift", ichar_equals))
-        Logger::Log("HKIA Infinite Gift module injected.");
+        LOG("HKIA Infinite Gift module injected.");
 
     else
-        Logger::Log("Unknown module name: %s", name);
+        LOG("Unknown module name: %s", name);
 }
 }
