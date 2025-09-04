@@ -2,14 +2,13 @@
 #include <Windows.h>
 #include <Shlwapi.h>
 #include <MinHook.h>
-#include <iostream>
 #include <string>
 #include "ProxyMap.hpp"
 #include "Logger.hpp"
 #include "ProxyResolver.hpp"
 
 #define MOD_PATH "C:\\Users\\Beemer\\HKIAInfiniteGift\\x64\\Release\\HKIAInfiniteGift.dll" // Change this to your mod DLL path
-#define GAMEASSEMBLY "GameAssembly.dll" // Change this if the target game uses a different name
+#define GAMEASSEMBLY L"GameAssembly.dll" // Change this if the target game uses a different name
 #define GAME_PROCESS "Hello Kitty.exe" // Change this to your target process name
 
 using il2cpp_init_fn = void* (__cdecl*)(void*);
@@ -96,43 +95,25 @@ extern "C" __declspec(dllexport) void __cdecl NativeHookDetach(void** target, vo
     MH_RemoveHook(*target);
 }
 
-bool hooksInitiated = false;
-void Init(HMODULE hModule) {
-    // Initialize the logger
-    LOG("Probing il2cpp_init");
-    MH_Initialize();
-
-    HMODULE gameAssembly = LoadLibraryA(GAMEASSEMBLY);
-    if (!gameAssembly) {
-        LOG("Failed to load GameAssembly.dll");
-        return;
-    }
-
-    orig_il2cpp_init = reinterpret_cast<void*>(GetProcAddress(gameAssembly, "il2cpp_init"));
-    if (!orig_il2cpp_init) return;
-
-    LPVOID initHook = reinterpret_cast<LPVOID>(&Il2CppInitHook);
-    MH_CreateHook(orig_il2cpp_init, initHook, reinterpret_cast<LPVOID*>(&il2cpp_init));
-    MH_EnableHook(orig_il2cpp_init);
-}
-
 static DWORD WINAPI HookThread(LPVOID hModule) {
-    MH_Initialize();
-
-    // Wait for GameAssembly to be loaded by the game
-    HMODULE gameAsm = nullptr;
-    for (int i = 0; i < 600 && !gameAsm; ++i) { // up to ~60s
-        gameAsm = GetModuleHandleA(GAMEASSEMBLY);
-        if (!gameAsm) Sleep(100);
+    ProxyResolver::Init(reinterpret_cast<HMODULE>(hModule));
+    
+    if (MH_Initialize() != MH_OK) {
+        LOG("Failed to initialize MinHook");
+        return 1;
     }
-    if (!gameAsm) return 0;
 
-    auto initPtr = reinterpret_cast<void*>(GetProcAddress(gameAsm, "il2cpp_init"));
-    if (!initPtr) return 0;
+    if (MH_CreateHookApiEx(GAMEASSEMBLY, "il2cpp_init", (LPVOID)&Il2CppInitHook,
+        (LPVOID*)&il2cpp_init, (LPVOID*)&orig_il2cpp_init) != MH_OK) {
+        LOG("Failed to create il2cpp_init hook");
+        return 1;
+    }
 
-    orig_il2cpp_init = initPtr;
-    MH_CreateHook(initPtr, (LPVOID)&Il2CppInitHook, (LPVOID*)&il2cpp_init);
-    MH_EnableHook(initPtr);
+    if (MH_EnableHook(orig_il2cpp_init) != MH_OK) {
+        LOG("Failed to enable il2cpp_init hook");
+        return 1;
+    }
+
     return 0;
 }
 

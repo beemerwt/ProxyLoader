@@ -31,6 +31,22 @@ target_include_directories(ProxyLoader PRIVATE
     "${CMAKE_SOURCE_DIR}/libs/minhook-master/include"
 )
 
+# Important! To avoid dependency on libstdc++-6.dll and libgcc_s_seh-1.dll
+target_link_options(ProxyLoader PRIVATE
+  $<$<CXX_COMPILER_ID:GNU>:-static-libstdc++ -static-libgcc>
+)
+
+# Important! To avoid dependency on libwinpthread-1.dll
+target_link_libraries(ProxyLoader PRIVATE
+  $<$<CXX_COMPILER_ID:GNU>:-Wl,-Bstatic -lwinpthread -Wl,-Bdynamic>
+)
+
+# Show compiler info
+# Just for convenience purposes to see which compiler is being used
+# Make sure it's gcc/g++
+message(STATUS "C compiler  : ${CMAKE_C_COMPILER}  (${CMAKE_C_COMPILER_ID})")
+message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER} (${CMAKE_CXX_COMPILER_ID})")
+
 if (MINGW)
   set_target_properties(ProxyLoader PROPERTIES IMPORT_PREFIX "")
 endif()
